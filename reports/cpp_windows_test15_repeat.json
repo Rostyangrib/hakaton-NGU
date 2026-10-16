@@ -1,0 +1,41 @@
+{
+  "generated_utc": "2026-10-16T16:20:07.649043+00:00",
+  "platform": "win32",
+  "language": "cpp",
+  "compiler": "g++.exe (GCC) 14.2.0\nCopyright (C) 2024 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
+  "source_file": "solution.cpp",
+  "artifacts_directory": "build/open-tests/20261016T161955942786Z",
+  "solution_sha256": "e56e1f6eec886d556238876013f0f74507fce98c9a09de1573eb7de882f6d369",
+  "source_sha256": "975bed4f82baa8c9c1a808abcf621451d9c4a4690c23c4d5c4cf8e17ca0347a3",
+  "interactor_sha256": "1598efb5e76facb6ad46f8b8cf24896025fe9f7e9b729ec1e22a418a6c3fa14f",
+  "measurement": "Windows GetProcessTimes: user+kernel CPU; GetProcessMemoryInfo: peak working set; solution process only",
+  "runtime_overrides": {},
+  "protocol": null,
+  "all_match_reference": true,
+  "test_count": 1,
+  "tests": [
+    {
+      "test": 15,
+      "commands": 200000,
+      "weight": 10.0,
+      "remaining_pipe_m": 418757,
+      "trench_m": 441860,
+      "kpi": 0.9477142081202191,
+      "weighted_score": 9.47714208120219,
+      "cpu_seconds": 3.21875,
+      "user_cpu_seconds": 1.21875,
+      "kernel_cpu_seconds": 2.0,
+      "wall_seconds": 11.245826099999249,
+      "within_cpu_limit": true,
+      "within_memory_limit": true,
+      "test_sha256": "0b37a067bbe01429414ba20096e0a30fc9c424f7f364d101f71c32b85fe3a353",
+      "matches_reference": true,
+      "peak_memory_mib": 5.4375,
+      "memory_metric": "peak_working_set"
+    }
+  ],
+  "total_weighted_score": 9.47714208120219,
+  "sum_test_weights": 10.0,
+  "all_valid": true,
+  "all_within_limits": true
+}

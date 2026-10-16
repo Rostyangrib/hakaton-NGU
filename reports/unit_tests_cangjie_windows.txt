@@ -1,0 +1,20 @@
+--------------------------------------------------------------------------------------------------
+TP: pipeline, time elapsed: 2192702200 ns, RESULT:
+    TCS: PipelineTests, time elapsed: 2192686100 ns, RESULT:
+    [ PASSED ] CASE: originalExample (1346200 ns)
+    [ PASSED ] CASE: tailExpansionAndFortyMeters (21917000 ns)
+    [ PASSED ] CASE: exactFitAndPidAfterRemoval (1010600 ns)
+    [ PASSED ] CASE: mergeBothNeighborsAndTail (14078000 ns)
+    [ PASSED ] CASE: warmupAndRampBoundaries (36100 ns)
+    [ PASSED ] CASE: slidingWindowForgetsOldLengths (42000 ns)
+    [ PASSED ] CASE: scoringMatchesFormula (43200 ns)
+    [ PASSED ] CASE: bestFitCounterexampleIsValid (14889200 ns)
+    [ PASSED ] CASE: optimizedCandidatesCoverAllLengths (19332200 ns)
+    [ PASSED ] CASE: lazyPositionsReuseSameGap (36918200 ns)
+    [ PASSED ] CASE: rejectsInvalidPipeAndPid (1505000 ns)
+    [ PASSED ] CASE: hundredSmallRandomScenarios (1271022900 ns)
+    [ PASSED ] CASE: adaptiveRandomScenarios (809499900 ns)
+Summary: TOTAL: 13
+    PASSED: 13, SKIPPED: 0, ERROR: 0
+    FAILED: 0
+--------------------------------------------------------------------------------------------------

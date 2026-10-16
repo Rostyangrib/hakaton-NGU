@@ -7,4 +7,7 @@
 *.ipynb text eol=lf
 *.pdf binary
 *.zip binary
+reports/*.json text eol=lf
+reports/*.txt text eol=lf
 case2_materials/** -text -whitespace
+.gitattributes text eol=lf

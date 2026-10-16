@@ -1,0 +1,14 @@
+PASS originalExample
+PASS tailExpansionAndFortyMeters
+PASS exactFitAndPidAfterRemoval
+PASS mergeBothNeighborsAndTail
+PASS warmupAndRampBoundaries
+PASS slidingWindowForgetsOldLengths
+PASS scoringMatchesFormula
+PASS bestFitCounterexampleIsValid
+PASS optimizedCandidatesCoverAllLengths
+PASS positionsReuseSameGap
+PASS rejectsInvalidPipeAndPid
+PASS hundredSmallRandomScenarios
+PASS adaptiveRandomScenarios
+TOTAL 13; PASSED 13; FAILED 0

@@ -1,0 +1,35 @@
+{
+  "generated_utc": "2026-10-16T15:53:59.844543+00:00",
+  "platform": "win32",
+  "sdk": "Cangjie Compiler: 1.0.5 (cjnative)\nTarget: x86_64-w64-mingw32",
+  "solution_sha256": "414ffeafb163a256b498850dfbd9dd7a595ce9f771b6a9b14dfda24ad5eb6aa3",
+  "source_sha256": "2ab722c55ab8bc216784a87394cdbd42eeb7895f665a4b4e9aaca97d4921a697",
+  "interactor_sha256": "1598efb5e76facb6ad46f8b8cf24896025fe9f7e9b729ec1e22a418a6c3fa14f",
+  "measurement": "Windows GetProcessTimes: user+kernel CPU; GetProcessMemoryInfo: peak working set; solution process only",
+  "runtime_overrides": {},
+  "protocol": null,
+  "test_count": 1,
+  "tests": [
+    {
+      "test": 15,
+      "commands": 200000,
+      "weight": 10.0,
+      "remaining_pipe_m": 418757,
+      "trench_m": 441860,
+      "kpi": 0.9477142081202191,
+      "weighted_score": 9.47714208120219,
+      "cpu_seconds": 4.296875,
+      "user_cpu_seconds": 2.296875,
+      "kernel_cpu_seconds": 2.0,
+      "peak_working_set_mib": 27.6484375,
+      "wall_seconds": 9.799303899984807,
+      "within_cpu_limit": true,
+      "within_memory_limit": true,
+      "test_sha256": "0b37a067bbe01429414ba20096e0a30fc9c424f7f364d101f71c32b85fe3a353"
+    }
+  ],
+  "total_weighted_score": 9.47714208120219,
+  "sum_test_weights": 10.0,
+  "all_valid": true,
+  "all_within_limits": true
+}

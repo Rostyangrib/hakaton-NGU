@@ -1,0 +1,16 @@
+Test  1.in  Time: 0.000s, Memory: 0.0mb, Result:  0.09
+Test 10.in  Time: 0.047s, Memory: 5.1mb, Result:  0.66652221
+Test 11.in  Time: 0.156s, Memory: 4.9mb, Result:  0.900132626
+Test 12.in  Time: 0.031s, Memory: 4.8mb, Result:  3.95714286
+Test 13.in  Time: 0.094s, Memory: 4.8mb, Result:  3.84578313
+Test 14.in  Time: 0.219s, Memory: 4.8mb, Result:  3.98773136
+Test 15.in  Time: 1.719s, Memory: 5.4mb, Result:  9.47714208
+Test  2.in  Time: 0.000s, Memory: 0.0mb, Result:  0.5
+Test  3.in  Time: 0.000s, Memory: 4.5mb, Result:  0.375
+Test  4.in  Time: 0.000s, Memory: 0.0mb, Result:  0.666666667
+Test  5.in  Time: 0.109s, Memory: 5.1mb, Result:  0.499803382
+Test  6.in  Time: 0.000s, Memory: 0.0mb, Result:  0.9
+Test  7.in  Time: 0.000s, Memory: 4.8mb, Result:  0.998214286
+Test  8.in  Time: 0.094s, Memory: 4.8mb, Result:  0.984468085
+Test  9.in  Time: 0.094s, Memory: 5.1mb, Result:  0.5
+Total:  28.348606685999997
