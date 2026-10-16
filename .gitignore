@@ -1,0 +1,13 @@
+/build/
+/tmp/
+/.tools/
+/.obsidian/
+/.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+**/__pycache__/
+*.py[cod]
+/score.txt
+/answer.txt
+/report.txt
+/default.profraw
+

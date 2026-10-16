@@ -1,0 +1,9 @@
+*.cj text eol=lf
+*.py text eol=lf
+*.ps1 text eol=lf
+*.md text eol=lf
+*.ipynb text eol=lf
+*.pdf binary
+*.zip binary
+case2_materials/** -text
+
