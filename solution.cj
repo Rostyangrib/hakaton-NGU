@@ -16,45 +16,58 @@ let SCORE_EPS: Float64 = 1.0e-9
 // Low-level reads return the currently available bytes, unlike a full-array
 // ConsoleReader read. This preserves interactive request/reply ordering.
 @When[os == "Windows"]
+foreign func ReadFile(handle: IntNative, buffer: CPointer<UInt8>, size: UInt32,
+    count: CPointer<UInt32>, overlapped: CPointer<UInt8>): Int32
+@When[os == "Windows"]
+foreign func GetStdHandle(kind: UInt32): IntNative
+@When[os == "Windows"]
 foreign func _read(fd: Int32, buffer: CPointer<UInt8>, count: UInt32): Int32
 @When[os == "Windows"]
-foreign func _setmode(fd: Int32, mode: Int32): Int32
+let inputHandle = unsafe { GetStdHandle(4294967286) } // STD_INPUT_HANDLE = -10
+@When[os == "Windows"]
+let outputHandle = unsafe { GetStdHandle(4294967285) } // STD_OUTPUT_HANDLE = -11
 @When[os != "Windows"]
 foreign func read(fd: Int32, buffer: CPointer<UInt8>, count: UIntNative): IntNative
 
 @When[os == "Windows"]
-func readChunk(buffer: CPointer<UInt8>): Int64 {
-    return Int64(unsafe { _read(0, buffer, 4096) })
+func readChunk(buffer: CPointer<UInt8>, count: CPointer<UInt32>): Int64 {
+    let result = unsafe { ReadFile(inputHandle, buffer, 4096, count, CPointer<UInt8>()) }
+    if (result == 0) {
+        // A closed anonymous pipe fails ReadFile. The rare CRT fallback
+        // distinguishes EOF (0) from a read error (-1) without thread-local
+        // GetLastError, which cannot survive a Cangjie foreign-call transition.
+        return Int64(unsafe { _read(0, buffer, 4096) })
+    }
+    return Int64(unsafe { count.read() })
 }
 @When[os != "Windows"]
-func readChunk(buffer: CPointer<UInt8>): Int64 {
+func readChunk(buffer: CPointer<UInt8>, _count: CPointer<UInt32>): Int64 {
     return Int64(unsafe { read(0, buffer, 4096) })
 }
 
 @When[os == "Windows"]
-foreign func _write(fd: Int32, buffer: CPointer<UInt8>, count: UInt32): Int32
+foreign func WriteFile(handle: IntNative, buffer: CPointer<UInt8>, size: UInt32,
+    count: CPointer<UInt32>, overlapped: CPointer<UInt8>): Int32
 @When[os != "Windows"]
 foreign func write(fd: Int32, buffer: CPointer<UInt8>, count: UIntNative): IntNative
 
 @When[os == "Windows"]
-func writeChunk(buffer: CPointer<UInt8>, count: Int64): Int64 {
-    return Int64(unsafe { _write(1, buffer, UInt32(count)) })
+func writeChunk(buffer: CPointer<UInt8>, size: Int64, count: CPointer<UInt32>): Int64 {
+    let result = unsafe { WriteFile(outputHandle, buffer, UInt32(size), count, CPointer<UInt8>()) }
+    return if (result == 0) { -1 } else { Int64(unsafe { count.read() }) }
 }
 
 @When[os == "Windows"]
-func configureBinaryStreams(): Unit {
-    // _O_BINARY: preserve bytes and avoid CRT CRLF translation on every reply.
-    let inputMode = unsafe { _setmode(0, 0x8000) }
-    let outputMode = unsafe { _setmode(1, 0x8000) }
-    if (inputMode < 0 || outputMode < 0) {
-        throw IllegalStateException("Cannot configure standard streams")
+func configureStreams(): Unit {
+    if (inputHandle == 0 || inputHandle == -1 || outputHandle == 0 || outputHandle == -1) {
+        throw IllegalStateException("Cannot obtain standard stream handles")
     }
 }
 @When[os != "Windows"]
-func configureBinaryStreams(): Unit {}
+func configureStreams(): Unit {}
 @When[os != "Windows"]
-func writeChunk(buffer: CPointer<UInt8>, count: Int64): Int64 {
-    return Int64(unsafe { write(1, buffer, UIntNative(count)) })
+func writeChunk(buffer: CPointer<UInt8>, size: Int64, _count: CPointer<UInt32>): Int64 {
+    return Int64(unsafe { write(1, buffer, UIntNative(size)) })
 }
 
 struct Gap {
@@ -470,19 +483,21 @@ class Pipeline {
 // wait for a full block or for the next command before answering this one.
 class CommandReader {
     private let buffer = LibC.malloc<UInt8>(count: 4096)
+    private let readCount = LibC.malloc<UInt32>(count: 1)
     private var size: Int64 = 0
     private var offset: Int64 = 0
     private var closed = false
 
     public init() {
-        if (buffer.isNull()) {
+        if (buffer.isNull() || readCount.isNull()) {
+            unsafe { LibC.free(buffer); LibC.free(readCount) }
             throw IllegalStateException("Cannot allocate input buffer")
         }
     }
 
     private func nextByte(): Int64 {
         if (offset == size) {
-            size = readChunk(buffer)
+            size = readChunk(buffer, readCount)
             offset = 0
             if (size < 0 || size > 4096) {
                 throw IllegalStateException("Cannot read input")
@@ -531,6 +546,7 @@ class CommandReader {
     public func close(): Unit {
         if (!closed) {
             unsafe { LibC.free(buffer) }
+            unsafe { LibC.free(readCount) }
             closed = true
         }
     }
@@ -538,10 +554,12 @@ class CommandReader {
 
 class ReplyWriter {
     private let buffer = LibC.malloc<UInt8>(count: 32)
+    private let writtenCount = LibC.malloc<UInt32>(count: 1)
     private var closed = false
 
     public init() {
-        if (buffer.isNull()) {
+        if (buffer.isNull() || writtenCount.isNull()) {
+            unsafe { LibC.free(buffer); LibC.free(writtenCount) }
             throw IllegalStateException("Cannot allocate output buffer")
         }
     }
@@ -587,7 +605,7 @@ class ReplyWriter {
         // reply now: do not wait for another command or batch several replies.
         var offset: Int64 = 0
         while (offset < size) {
-            let written = writeChunk(unsafe { buffer + offset }, size - offset)
+            let written = writeChunk(unsafe { buffer + offset }, size - offset, writtenCount)
             if (written <= 0 || written > size - offset) {
                 throw IllegalStateException("Cannot write the interactive reply")
             }
@@ -598,13 +616,14 @@ class ReplyWriter {
     public func close(): Unit {
         if (!closed) {
             unsafe { LibC.free(buffer) }
+            unsafe { LibC.free(writtenCount) }
             closed = true
         }
     }
 }
 
 main(): Int64 {
-    configureBinaryStreams()
+    configureStreams()
     let input = CommandReader()
     let output = ReplyWriter()
     try {
