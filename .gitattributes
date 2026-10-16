@@ -5,5 +5,4 @@
 *.ipynb text eol=lf
 *.pdf binary
 *.zip binary
-case2_materials/** -text
-
+case2_materials/** -text -whitespace
