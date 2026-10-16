@@ -45,6 +45,8 @@ python tools/report_improvement.py
 ## Сохранённые реализации
 
 - `solution_best_fit.cpp` — чистый Best Fit, отдельный файл для отправки. Проверка: `python tools/check_best_fit.py build/solution-best-fit.exe` после его сборки.
+- `solution_first_fit.cpp` — сохранённый вариант First Fit; результаты и сборка: [FIRST_FIT_REPORT.md](FIRST_FIT_REPORT.md).
+- `solution_hybrid.cpp` — сохранённый гибрид Best Fit и First Fit; результаты и сборка: [HYBRID_REPORT.md](HYBRID_REPORT.md).
 - `solution_statistics.cpp`, `solution_statistics_test.cpp` — предыдущая C++-эвристика по распределению длин. На публичных тестах она уступила Best Fit: 28,348606685443 против 28,375837599373. Историческое сравнение: [KPI_COMPARISON.md](KPI_COMPARISON.md).
 - `solution.cj`, `solution_test.cj`, `build.ps1` — прежний вариант на Cangjie 1.0.5.
 - [TEST_REPORT.md](TEST_REPORT.md) — исторический отчёт о переносе статистического варианта на C++, привязанный к старому коммиту.
