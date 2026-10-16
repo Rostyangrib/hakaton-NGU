@@ -1,9 +1,8 @@
-// Standalone interactive solution. Compatible with GCC C++20 (and C++17).
+// Standalone online solution: GCC C++20 / C++17. No test files are read.
 #include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstdio>
-#include <cstdint>
 #include <iterator>
 #include <map>
 #include <optional>
@@ -28,180 +27,162 @@ namespace pipeline {
 
 constexpr int MAX_PIPES = 200000;
 constexpr int MAX_TRENCH = 100000000;
-constexpr int WINDOW_SIZE = 1024;
-constexpr int WARMUP = 200;
-constexpr int RAMP = 200;
-constexpr double PRIOR_MASS = 1.0;
-constexpr double LENGTH_BIAS = 0.25;
-constexpr double SCORE_EPS = 1e-9;
 
-struct Gap {
-    int start;
-    int length;
-    bool operator==(const Gap& other) const {
-        return start == other.start && length == other.length;
-    }
-};
-
-class ArrivalHistory {
-    std::array<int, WINDOW_SIZE> ring{};
-    int cursor = 0;
-
-public:
-    std::array<int, 41> counts{};
-    std::array<double, 41> probabilities{};
-    std::array<double, 41> penalties{};
-    int seen = 0;
-    int size = 0;
-    double influence = 0.0;
-
-    void observe(int length) {
-        if (length < 1 || length > 40) {
-            throw std::invalid_argument("Pipe length must be in 1..40");
-        }
-        if (size == WINDOW_SIZE) {
-            --counts[ring[cursor]];
-        } else {
-            ++size;
-        }
-        ring[cursor] = length;
-        cursor = (cursor + 1) % WINDOW_SIZE;
-        ++counts[length];
-        ++seen;
-    }
-
-    // The current arrival is not observed until after its position is chosen.
-    void prepare() {
-        const int t = seen + 1;
-        influence = t <= WARMUP ? 0.0 :
-                    (t >= WARMUP + RAMP ? 1.0 : double(t - WARMUP) / RAMP);
-        if (influence == 0.0) return;
-
-        const double denominator = size + PRIOR_MASS;
-        double mean = 0.0;
-        for (int length = 1; length <= 40; ++length) {
-            const double p = (counts[length] + PRIOR_MASS / 40.0) / denominator;
-            probabilities[length] = p;
-            mean += length * p;
-        }
-        for (int length = 1; length <= 40; ++length) {
-            const double p = probabilities[length];
-            probabilities[length] = (1.0 - LENGTH_BIAS) * p +
-                                    LENGTH_BIAS * length * p / mean;
-        }
-        double tail = 0.0;
-        penalties[40] = 0.0;
-        for (int g = 39; g >= 1; --g) {
-            tail += probabilities[g + 1];
-            penalties[g] = g * tail;
-        }
-        penalties[0] = 0.0;
-    }
-
-    double penalty(int length) const {
-        return length <= 0 || length >= 40 ? 0.0 : penalties[length];
-    }
-
-    double score(int hole, int pipe) const {
-        const int rest = hole - pipe;
-        return (1.0 - influence) * rest + influence * (penalty(rest) - penalty(hole));
-    }
-};
+// The benchmark can measure the two improvements independently.
+// The submitted program always uses both.
+struct Options { bool cohorts = true; bool coalescence = true; };
 
 class Pipeline {
-    // Both indexes contain exactly the same free intervals.
-    std::map<int, int> byStart;
-    std::map<int, std::set<int>> byLength;
-    std::vector<int> positions = std::vector<int>(MAX_PIPES + 1, -1);
-    std::vector<int> lengths = std::vector<int>(MAX_PIPES + 1, 0);
+    struct Pipe { int position, length; };
+    Options options;
+    std::map<int, int> byPosition;          // Free intervals: start -> length.
+    std::set<std::pair<int, int>> byLength; // The same intervals: (length, start).
+    std::map<int, int> live;                // Occupied interval: start -> PID.
+    std::vector<Pipe> pipes{{-1, 0}};
+    std::array<int, 41> arrived{}, removed{};
+    int trenchLength = 0, occupied = 0;
+
+    // A batch is a run of positive commands, followed by removals.
+    int batchFirst = 1, batchSize = 0, batchLength = 0;
+    int removedOdd = 0, removedEven = 0, removedOutside = 0;
+    int burstSize = 0, burstInitialAlive = 0;
+    int expectedBatch = 0, coalescenceBudget = 0;
+    bool deleting = false;
 
     void insertGap(int start, int length) {
         if (length <= 0) return;
-        byStart.emplace(start, length);
-        byLength[length].insert(start);
+        byPosition.emplace(start, length);
+        byLength.emplace(length, start);
     }
-
     void eraseGap(int start, int length) {
-        byStart.erase(start);
-        auto bucket = byLength.find(length);
-        bucket->second.erase(start);
-        if (bucket->second.empty()) byLength.erase(bucket);
+        byPosition.erase(start);
+        byLength.erase({length, start});
     }
-
-public:
-    ArrivalHistory history;
-    int trench = 0;
-    int pipeCount = 0;
-    std::int64_t occupied = 0;
-    int lastCandidateCount = 0;
-
-    std::optional<Gap> chooseGap(int length) {
-        history.prepare();
-        lastCandidateCount = 0;
-        std::optional<Gap> best;
-        double bestScore = 0.0;
-        for (auto bucket = byLength.lower_bound(length); bucket != byLength.end(); ++bucket) {
-            const int hole = bucket->first;
-            const int start = *bucket->second.begin();
-            const double score = history.score(hole, length);
-            ++lastCandidateCount;
-            if (!best || score < bestScore - SCORE_EPS ||
-                (score <= bestScore + SCORE_EPS &&
-                 (hole < best->length || (hole == best->length && start < best->start)))) {
-                best = Gap{start, hole};
-                bestScore = score;
-            }
-            // Larger holes all have Phi(hole)=Phi(hole-length)=0.
-            // Only the smallest such length can win the tie or the BF term.
-            if (history.influence == 0.0 || hole >= length + 40) break;
+    void observeArrival(int length) {
+        if (deleting) {
+            // Preserve merging opportunities temporarily after a removal burst.
+            if (burstSize >= 3 && 4 * burstSize >= burstInitialAlive)
+                coalescenceBudget = burstInitialAlive;
+            // Learn alternating removals only from a completed homogeneous batch.
+            const int sameParity = std::max(removedOdd, removedEven);
+            expectedBatch = batchLength > 0 && batchSize >= 32 &&
+                sameParity * 3 >= batchSize && std::min(removedOdd, removedEven) == 0 &&
+                removedOutside == 0 ? batchSize : 0;
+            batchFirst = static_cast<int>(pipes.size());
+            batchSize = 0;
+            batchLength = length;
+            removedOdd = removedEven = removedOutside = 0;
+            deleting = false;
+        }
+        if (batchSize == 0) batchLength = length;
+        else if (batchLength != length) batchLength = -1;
+        ++batchSize;
+    }
+    double neighborRisk(int start) const {
+        double risk = 0.0;
+        const auto right = live.lower_bound(start);
+        if (right != live.begin()) {
+            const int length = pipes[std::prev(right)->second].length;
+            risk += static_cast<double>(removed[length]) / arrived[length];
+        }
+        if (right != live.end()) {
+            const int length = pipes[right->second].length;
+            risk += static_cast<double>(removed[length]) / arrived[length];
+        }
+        return risk;
+    }
+    auto chooseGap(int length, bool preserveNeighbors) const {
+        auto best = byLength.lower_bound({length, 0});
+        if (!preserveNeighbors || best == byLength.end()) return best;
+        // Each neighbor contributes at most 5 m of penalty. A gap more than
+        // 10 m longer than the smallest adequate gap cannot improve its score.
+        const int limit = best->first + 10;
+        double bestScore = 1e100;
+        for (auto it = best; it != byLength.end() && it->first <= limit;) {
+            const double score = it->first - length + 5.0 * neighborRisk(it->second);
+            if (score < bestScore - 1e-12) { bestScore = score; best = it; }
+            // Only the leftmost gap of each length; at most 11 candidates.
+            it = byLength.lower_bound({it->first + 1, 0});
         }
         return best;
     }
 
+public:
+    explicit Pipeline(Options settings = {}) : options(settings) {}
+    int trench() const { return trenchLength; }
+    int occupiedMeters() const { return occupied; }
+
     std::pair<int, int> addPipe(int length) {
-        if (length < 1 || length > 40 || pipeCount >= MAX_PIPES) {
+        if (length < 1 || length > 40 || pipes.size() > MAX_PIPES)
             throw std::invalid_argument("Invalid pipe length or too many pipes");
-        }
-        const auto gap = chooseGap(length);
-        int digs = 0;
-        int position = 0;
-        if (gap) {
-            position = gap->start;
-            eraseGap(gap->start, gap->length);
-            insertGap(position + length, gap->length - length);
+        observeArrival(length);
+        const bool cohort = options.cohorts && expectedBatch > 0 && batchLength > 0 &&
+                            batchSize <= expectedBatch;
+        const bool preserve = options.coalescence && coalescenceBudget > 0 && !cohort;
+        const bool fromRight = cohort && batchSize % 2 == 0;
+        const auto best = chooseGap(length, preserve);
+        int start, gapLength, digs = 0;
+        if (best != byLength.end()) {
+            gapLength = best->first;
+            start = best->second;
+            eraseGap(start, gapLength);
         } else {
-            int tailLength = 0;
-            if (!byStart.empty()) {
-                const auto tail = std::prev(byStart.end());
-                if (tail->first + tail->second == trench) tailLength = tail->second;
+            start = trenchLength;
+            if (!byPosition.empty()) {
+                const auto tail = std::prev(byPosition.end());
+                if (tail->first + tail->second == trenchLength) {
+                    start = tail->first;
+                    eraseGap(tail->first, tail->second);
+                }
             }
-            digs = (length - tailLength + 19) / 20;
-            const int newTrench = trench + digs * 20;
-            if (newTrench > MAX_TRENCH) {
-                throw std::runtime_error("Trench length exceeds protocol limit");
+            const int tailLength = trenchLength - start;
+            int target = length;
+            if (cohort) {
+                // The previous batch is an estimate, not a promise about future
+                // commands. Grow the two-ended arena gradually. Extra free space
+                // is capped at 10% of the old trench (minimum 20 m), plus at most
+                // 19 m from rounding to full digging sections.
+                const int forecast = std::min({expectedBatch - batchSize + 1,
+                                               batchSize * 2 - 1, 256});
+                target = std::min(forecast * length,
+                                  length + std::max(20, trenchLength / 10));
             }
-            position = trench - tailLength;
-            if (tailLength > 0) eraseGap(position, tailLength);
-            trench = newTrench;
-            insertGap(position + length, trench - position - length);
+            digs = (target - tailLength + 19) / 20;
+            if (trenchLength + digs * 20 > MAX_TRENCH)
+                throw std::runtime_error("Trench length limit exceeded");
+            trenchLength += digs * 20;
+            gapLength = trenchLength - start;
         }
-        ++pipeCount;
-        positions[pipeCount] = position;
-        lengths[pipeCount] = length;
+        const int position = fromRight ? start + gapLength - length : start;
+        insertGap(fromRight ? start : start + length, gapLength - length);
+        live.emplace(position, static_cast<int>(pipes.size()));
+        pipes.push_back({position, length});
+        ++arrived[length];
         occupied += length;
-        history.observe(length);
+        if (coalescenceBudget > 0) --coalescenceBudget;
         return {digs, position};
     }
 
     int removePipe(int pid) {
-        if (pid < 1 || pid > pipeCount || lengths[pid] == 0) {
+        if (pid <= 0 || pid >= static_cast<int>(pipes.size()) || pipes[pid].length == 0)
             throw std::invalid_argument("Unknown or already removed PID");
+        if (!deleting) {
+            deleting = true;
+            removedOdd = removedEven = removedOutside = burstSize = 0;
+            burstInitialAlive = static_cast<int>(live.size());
         }
-        const int position = positions[pid];
-        int start = position;
-        int length = lengths[pid];
-        auto right = byStart.lower_bound(start);
-        if (right != byStart.begin()) {
+        ++burstSize;
+        if (pid >= batchFirst && pid < batchFirst + batchSize) {
+            if ((pid - batchFirst) % 2 == 0) ++removedOdd;
+            else ++removedEven;
+        } else ++removedOutside;
+        const int position = pipes[pid].position;
+        int start = position, length = pipes[pid].length;
+        ++removed[length];
+        occupied -= length;
+        live.erase(position);
+        auto right = byPosition.lower_bound(start);
+        if (right != byPosition.begin()) {
             const auto left = std::prev(right);
             if (left->first + left->second == start) {
                 start = left->first;
@@ -209,42 +190,34 @@ public:
                 eraseGap(left->first, left->second);
             }
         }
-        // Erasing the left neighbor does not invalidate the right iterator.
-        if (right != byStart.end() && right->first == start + length) {
+        if (right != byPosition.end() && start + length == right->first) {
             length += right->second;
             eraseGap(right->first, right->second);
         }
         insertGap(start, length);
-        occupied -= lengths[pid];
-        lengths[pid] = 0;
+        pipes[pid].length = 0;
         return position;
     }
 
-    // Inspection methods are used by the separate unit tests.
-    int pipePosition(int pid) const { return positions.at(pid); }
-    int pipeLength(int pid) const { return lengths.at(pid); }
-    std::vector<Gap> freeGaps() const {
-        std::vector<Gap> result;
-        for (const auto& gap : byStart) result.push_back({gap.first, gap.second});
-        return result;
-    }
-    bool checkIndexes() const {
-        int previousEnd = -1;
-        std::int64_t freeLength = 0;
-        std::size_t indexedCount = 0;
-        for (const auto& gap : byStart) {
-            const int start = gap.first, length = gap.second;
-            if (length <= 0 || start < 0 || start <= previousEnd || start + length > trench) return false;
-            const auto bucket = byLength.find(length);
-            if (bucket == byLength.end() || bucket->second.count(start) != 1) return false;
+    // Used only by tests; no scans in the interactive loop.
+    bool checkInvariants() const {
+        if (byPosition.size() != byLength.size()) return false;
+        int freeMeters = 0, previousEnd = -1, activeMeters = 0;
+        for (const auto& [start, length] : byPosition) {
+            if (start <= previousEnd || length <= 0 || start + length > trenchLength ||
+                byLength.count({length, start}) != 1) return false;
             previousEnd = start + length;
-            freeLength += length;
+            freeMeters += length;
         }
-        for (const auto& bucket : byLength) {
-            if (bucket.second.empty()) return false;
-            indexedCount += bucket.second.size();
+        previousEnd = 0;
+        for (const auto& [start, pid] : live) {
+            const auto pipe = pipes[pid];
+            if (pipe.position != start || pipe.length <= 0 || start < previousEnd ||
+                start + pipe.length > trenchLength) return false;
+            previousEnd = start + pipe.length;
+            activeMeters += pipe.length;
         }
-        return indexedCount == byStart.size() && freeLength + occupied == trench;
+        return freeMeters + occupied == trenchLength && activeMeters == occupied;
     }
 };
 

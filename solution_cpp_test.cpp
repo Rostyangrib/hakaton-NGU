@@ -1,224 +1,127 @@
 #define PIPELINE_NO_MAIN
 #include "solution.cpp"
-#include <cmath>
-#include <functional>
+#include <random>
 #include <string>
-
-using namespace pipeline;
 
 #define CHECK(...) do { if (!(__VA_ARGS__)) throw std::runtime_error("Check failed at line " + std::to_string(__LINE__) + ": " #__VA_ARGS__); } while (false)
 
-static bool closeEnough(double a, double b) { return std::abs(a - b) < 1e-10; }
-
-// Independent occupancy model: one cell per meter, no interval indexes.
+// Independent meter-by-meter occupancy checker, with no interval indexes.
 class MeterOracle {
-    std::vector<int> cells;
-    std::vector<int> positions{-1}, lengths{0};
+    std::vector<int> cells, positions{-1}, lengths{0};
+    int occupied = 0;
 public:
-    void add(int length, int digs, int position) {
-        CHECK(digs >= 0 && position >= 0);
+    void add(int length, std::pair<int, int> reply) {
+        const auto [digs, start] = reply;
+        CHECK(digs >= 0 && start >= 0);
         cells.resize(cells.size() + digs * 20, 0);
-        CHECK(position + length <= static_cast<int>(cells.size()));
-        const int pid = static_cast<int>(positions.size());
-        for (int i = position; i < position + length; ++i) {
-            CHECK(cells[i] == 0);
-            cells[i] = pid;
+        CHECK(start + length <= static_cast<int>(cells.size()));
+        for (int i = start; i < start + length; ++i) {
+            CHECK(cells[i] == 0); cells[i] = static_cast<int>(positions.size());
         }
-        positions.push_back(position);
-        lengths.push_back(length);
+        positions.push_back(start); lengths.push_back(length); occupied += length;
     }
-    void remove(int pid, int position) {
-        CHECK(positions.at(pid) == position && lengths.at(pid) > 0);
-        for (int i = position; i < position + lengths[pid]; ++i) {
-            CHECK(cells[i] == pid);
-            cells[i] = 0;
+    void remove(int pid, int start) {
+        CHECK(positions.at(pid) == start && lengths.at(pid) > 0);
+        for (int i = start; i < start + lengths[pid]; ++i) {
+            CHECK(cells[i] == pid); cells[i] = 0;
         }
-        lengths[pid] = 0;
+        occupied -= lengths[pid]; lengths[pid] = 0;
     }
-    void check(const Pipeline& engine) const {
-        CHECK(engine.checkIndexes());
-        CHECK(static_cast<int>(cells.size()) == engine.trench);
-        std::vector<Gap> expected;
-        std::int64_t occupied = 0;
+    // A separate exhaustive Best Fit implementation for disabled heuristics.
+    std::pair<int, int> bestFit(int length) const {
+        int bestLength = pipeline::MAX_TRENCH, bestStart = -1;
         for (int i = 0; i < static_cast<int>(cells.size());) {
-            if (cells[i] != 0) { ++occupied; ++i; }
-            else {
-                const int start = i;
-                while (i < static_cast<int>(cells.size()) && cells[i] == 0) ++i;
-                expected.push_back({start, i - start});
+            if (cells[i]) { ++i; continue; }
+            const int start = i;
+            while (i < static_cast<int>(cells.size()) && !cells[i]) ++i;
+            if (i - start >= length && i - start < bestLength) {
+                bestLength = i - start; bestStart = start;
             }
         }
-        CHECK(expected == engine.freeGaps());
-        CHECK(occupied == engine.occupied);
+        if (bestStart >= 0) return {0, bestStart};
+        int start = static_cast<int>(cells.size());
+        while (start && !cells[start - 1]) --start;
+        return {(length - (static_cast<int>(cells.size()) - start) + 19) / 20, start};
+    }
+    void verify(const pipeline::Pipeline& engine) const {
+        CHECK(engine.trench() == static_cast<int>(cells.size()));
+        CHECK(engine.occupiedMeters() == occupied);
+        CHECK(engine.checkInvariants());
     }
 };
 
-static std::optional<Gap> fullScan(Pipeline& p, int length) {
-    p.history.prepare();
-    std::optional<Gap> best;
-    double bestScore = 0.0;
-    for (const auto& gap : p.freeGaps()) {
-        if (gap.length < length) continue;
-        const double score = p.history.score(gap.length, length);
-        if (!best || score < bestScore - SCORE_EPS ||
-            (score <= bestScore + SCORE_EPS && (gap.length < best->length ||
-             (gap.length == best->length && gap.start < best->start)))) {
-            best = gap;
-            bestScore = score;
-        }
+static int run(const std::vector<int>& commands, pipeline::Options options = {}) {
+    pipeline::Pipeline engine(options);
+    MeterOracle oracle;
+    for (int command : commands) {
+        if (command > 0) {
+            const auto reply = engine.addPipe(command);
+            if (!options.cohorts && !options.coalescence) CHECK(reply == oracle.bestFit(command));
+            oracle.add(command, reply);
+        } else oracle.remove(-command, engine.removePipe(-command));
+        oracle.verify(engine);
     }
-    return best;
+    return engine.trench();
 }
 
-static void randomScenario(int seed, int commands) {
-    Pipeline p;
-    MeterOracle oracle;
-    std::vector<int> live;
-    std::int64_t state = seed + 1;
-    auto next = [&](int bound) {
-        state = state * 48271 % 2147483647;
-        return static_cast<int>(state % bound);
-    };
-    for (int step = 0; step < commands; ++step) {
-        if (live.empty() || next(100) < 58) {
-            const int length = next(40) + 1;
-            if (step % 17 == 0) {
-                CHECK(p.chooseGap(length) == fullScan(p, length));
-                CHECK(p.lastCandidateCount <= 41);
-            }
-            const auto answer = p.addPipe(length);
-            oracle.add(length, answer.first, answer.second);
-            live.push_back(p.pipeCount);
-        } else {
-            const int index = next(static_cast<int>(live.size()));
-            const int pid = live[index];
-            oracle.remove(pid, p.removePipe(pid));
-            live[index] = live.back();
-            live.pop_back();
-        }
-        oracle.check(p);
-    }
+static void mustFail(auto action) {
+    bool failed = false;
+    try { action(); } catch (const std::exception&) { failed = true; }
+    CHECK(failed);
 }
 
 int main() {
-    const std::vector<std::pair<const char*, std::function<void()>>> tests{
-        {"originalExample", [] {
-            Pipeline p;
-            CHECK(p.addPipe(1) == std::make_pair(1, 0));
-            CHECK(p.addPipe(4) == std::make_pair(0, 1));
-            CHECK(p.addPipe(15) == std::make_pair(0, 5));
-            CHECK(p.removePipe(2) == 1);
-            CHECK(p.addPipe(3) == std::make_pair(0, 1));
-            CHECK(p.removePipe(1) == 0);
-            CHECK(p.trench == 20 && p.occupied == 18 && p.checkIndexes());
-        }},
-        {"tailExpansionAndFortyMeters", [] {
-            Pipeline p;
-            CHECK(p.addPipe(19) == std::make_pair(1, 0));
-            CHECK(p.addPipe(2) == std::make_pair(1, 19));
-            CHECK(p.addPipe(40) == std::make_pair(2, 21));
-            CHECK(p.trench == 80 && p.checkIndexes());
-            Pipeline fresh;
-            CHECK(fresh.addPipe(40) == std::make_pair(2, 0));
-            CHECK(fresh.freeGaps().empty());
-        }},
-        {"exactFitAndPidAfterRemoval", [] {
-            Pipeline p;
-            p.addPipe(10); p.addPipe(10); p.removePipe(1);
-            CHECK(p.addPipe(10) == std::make_pair(0, 0));
-            CHECK(p.pipeCount == 3 && p.pipeLength(1) == 0 && p.pipeLength(3) == 10);
-            CHECK(p.freeGaps().empty() && p.checkIndexes());
-        }},
-        {"mergeBothNeighborsAndTail", [] {
-            Pipeline p;
-            p.addPipe(5); p.addPipe(5); p.addPipe(5);
-            p.removePipe(1); p.removePipe(3); p.removePipe(2);
-            CHECK(p.freeGaps() == std::vector<Gap>({{0, 20}}));
-            CHECK(p.history.seen == 3 && p.history.counts[5] == 3);
-            CHECK(p.occupied == 0 && p.trench == 20 && p.checkIndexes());
-        }},
-        {"warmupAndRampBoundaries", [] {
-            ArrivalHistory h;
-            for (int i = 0; i < 199; ++i) h.observe(2);
-            h.prepare(); CHECK(h.influence == 0.0);
-            h.observe(2); h.prepare(); CHECK(closeEnough(h.influence, .005));
-            for (int i = 0; i < 199; ++i) h.observe(2);
-            h.prepare(); CHECK(h.influence == 1.0);
-        }},
-        {"slidingWindowForgetsOldLengths", [] {
-            ArrivalHistory h;
-            for (int i = 0; i < WINDOW_SIZE; ++i) h.observe(1);
-            for (int i = 0; i < WINDOW_SIZE; ++i) h.observe(40);
-            CHECK(h.seen == 2 * WINDOW_SIZE && h.size == WINDOW_SIZE);
-            CHECK(h.counts[1] == 0 && h.counts[40] == WINDOW_SIZE);
-            h.prepare(); double mass = 0;
-            for (int l = 1; l <= 40; ++l) { CHECK(h.probabilities[l] > 0); mass += h.probabilities[l]; }
-            CHECK(closeEnough(mass, 1.0));
-            CHECK(h.penalty(0) == 0 && h.penalty(40) == 0 && h.penalty(10000) == 0);
-        }},
-        {"scoringMatchesFormula", [] {
-            ArrivalHistory h;
-            for (int i = 0; i < 900; ++i) h.observe(1);
-            for (int i = 0; i < 100; ++i) h.observe(40);
-            h.prepare(); std::array<double, 41> raw{}; double mean = 0, cumulative = 0;
-            for (int l = 1; l <= 40; ++l) { raw[l] = (h.counts[l] + 1.0 / 40) / 1001; mean += l * raw[l]; }
-            for (int l = 1; l < 40; ++l) {
-                const double q = .75 * raw[l] + .25 * l * raw[l] / mean;
-                CHECK(closeEnough(q, h.probabilities[l])); cumulative += q;
-                CHECK(closeEnough(h.penalty(l), l * (1 - cumulative)));
-            }
-            CHECK(closeEnough(h.score(6, 3), h.penalty(3) - h.penalty(6)));
-        }},
-        {"bestFitCounterexampleIsValid", [] {
-            Pipeline p;
-            p.addPipe(4); p.addPipe(10); p.addPipe(6);
-            p.removePipe(1); p.removePipe(3);
-            p.addPipe(3); p.addPipe(4); p.addPipe(3);
-            CHECK(p.trench == 40 && p.occupied == 20 && p.checkIndexes());
-        }},
-        {"optimizedCandidatesCoverAllLengths", [] {
-            Pipeline p; std::vector<int> removable;
-            for (int hole = 1; hole <= 90; ++hole) {
-                for (int remaining = hole; remaining > 0;) {
-                    const int part = std::min(remaining, 40);
-                    p.addPipe(part); removable.push_back(p.pipeCount); remaining -= part;
+    try {
+        // Exact filling, both-neighbor merges, tail reuse, repeated removals.
+        CHECK(run({1,4,15,-2,3,-1}) == 20);
+        CHECK(run({19,2,40}) == 80);
+        CHECK(run({5,5,5,-1,-3,-2,20}) == 20);
+        CHECK(run({10,10,-1,10,-2,10}) == 20);
+        const std::vector<int> trap{4,4,3,4,2,3,-1,-3,-5,2,-6,5};
+        CHECK(run(trap, {false,false}) == 40);
+        CHECK(run(trap) == 20);
+        // Exact Best Fit is still needed here: First Fit would dig twice.
+        CHECK(run({3,1,2,1,1,12,-1,-3,-5,1,3}) == 20);
+        for (unsigned seed = 0; seed < 40; ++seed) {
+            std::mt19937 random(seed);
+            std::vector<int> commands, live;
+            int pid = 0;
+            for (int i = 0; i < 1500; ++i) {
+                if (live.empty() || random() % 100 < 58) {
+                    commands.push_back(1 + random() % 40); live.push_back(++pid);
+                } else {
+                    const int index = random() % live.size();
+                    commands.push_back(-live[index]); live[index] = live.back(); live.pop_back();
                 }
-                p.addPipe(1);
             }
-            for (int pid : removable) p.removePipe(pid);
-            for (int i = 0; i < 500; ++i) p.history.observe(3);
-            CHECK(p.checkIndexes());
-            for (int l = 1; l <= 40; ++l) {
-                CHECK(p.chooseGap(l) == fullScan(p, l)); CHECK(p.lastCandidateCount <= 41);
+            run(commands); run(commands, {false,false});
+        }
+        // Unseen batch lengths, either parity removed, then an abrupt regime shift.
+        for (int count : {33,65,130,263}) for (int parity : {0,1}) {
+            std::vector<int> commands;
+            int pid = 0;
+            for (int length : {2,5,9,17,31,40}) {
+                const int first = pid + 1;
+                for (int i = 0; i < count; ++i) { commands.push_back(length); ++pid; }
+                for (int i = parity; i < count; i += 2) commands.push_back(-(first + i));
             }
-        }},
-        {"positionsReuseSameGap", [] {
-            Pipeline p;
-            p.addPipe(10); p.addPipe(1); p.addPipe(10); p.addPipe(1);
-            p.removePipe(1); p.removePipe(3);
-            for (int i = 0; i < 1000; ++i) {
-                CHECK(p.addPipe(10) == std::make_pair(0, 0));
-                CHECK(p.removePipe(p.pipeCount) == 0 && p.checkIndexes());
-            }
-            p.addPipe(10); CHECK(p.addPipe(10) == std::make_pair(0, 11)); CHECK(p.checkIndexes());
-        }},
-        {"rejectsInvalidPipeAndPid", [] {
-            Pipeline p; int rejected = 0;
-            for (const int length : {0, 41}) {
-                try { p.addPipe(length); } catch (const std::invalid_argument&) { ++rejected; }
-            }
-            try { p.removePipe(1); } catch (const std::invalid_argument&) { ++rejected; }
-            p.addPipe(1); p.removePipe(1);
-            try { p.removePipe(1); } catch (const std::invalid_argument&) { ++rejected; }
-            CHECK(rejected == 4 && p.checkIndexes());
-        }},
-        {"hundredSmallRandomScenarios", [] { for (int seed = 0; seed < 100; ++seed) randomScenario(seed, 200); }},
-        {"adaptiveRandomScenarios", [] { for (int seed = 100; seed < 106; ++seed) randomScenario(seed, 1200); }},
-    };
-    int passed = 0;
-    for (const auto& test : tests) {
-        try { test.second(); ++passed; std::printf("PASS %s\n", test.first); }
-        catch (const std::exception& error) { std::fprintf(stderr, "FAIL %s: %s\n", test.first, error.what()); return 1; }
+            commands.push_back(3); ++pid; // Stop the predicted next batch early.
+            for (int i = 0; i < 99; ++i) { commands.push_back(1 + i % 40); ++pid; }
+            run(commands);
+        }
+        // Full command/PID limit, maximum length, zero speculative growth.
+        pipeline::Pipeline large;
+        for (int i = 0; i < 200000; ++i) CHECK(large.addPipe(40) == std::make_pair(2,40*i));
+        CHECK(large.trench() == 8000000 && large.checkInvariants());
+        mustFail([&] { large.addPipe(1); });
+        pipeline::Pipeline invalid;
+        mustFail([&] { invalid.addPipe(0); });
+        mustFail([&] { invalid.addPipe(41); });
+        mustFail([&] { invalid.removePipe(1); });
+        invalid.addPipe(4); invalid.removePipe(1);
+        mustFail([&] { invalid.removePipe(1); });
+        std::puts("PASS: meter oracle; 40 random streams x 1500 commands, improved and Best Fit; 8 batch/shift streams; 200000-command limit; invalid inputs");
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "FAIL: %s\n", error.what()); return 1;
     }
-    std::printf("TOTAL %d; PASSED %d; FAILED 0\n", static_cast<int>(tests.size()), passed);
 }
