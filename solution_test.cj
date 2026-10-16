@@ -349,6 +349,26 @@ class PipelineTests {
     }
 
     @TestCase
+    public func lazyPositionsReuseSameGap(): Unit {
+        let p = Pipeline()
+        p.addPipe(10)
+        p.addPipe(1)
+        p.addPipe(10)
+        p.addPipe(1)
+        p.removePipe(1)
+        p.removePipe(3)
+        for (_ in 0..1000) {
+            @Expect(sameOutput(p.addPipe(10), (0, 0)), true)
+            @Expect(p.removePipe(p.pipeCount), 0)
+            @Expect(p.checkIndexes(), true)
+        }
+        p.addPipe(10)
+        // Old copies of position zero must be skipped while it is occupied.
+        @Expect(sameOutput(p.addPipe(10), (0, 11)), true)
+        @Expect(p.checkIndexes(), true)
+    }
+
+    @TestCase
     public func rejectsInvalidPipeAndPid(): Unit {
         let p = Pipeline()
         var rejected: Int64 = 0
