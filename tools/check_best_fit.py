@@ -1,4 +1,4 @@
-"""Compare the executable with an independent meter model of Best/First Fit."""
+"""Compare the executable with an independent meter model of Best/First/Hybrid Fit."""
 import argparse
 from pathlib import Path
 import random
@@ -6,10 +6,12 @@ import subprocess
 
 
 def expected_replies(commands, policy="best-fit"):
+    reference = expected_replies(commands) if policy == "hybrid" else None
+    reference_trench = 0
     cells = []
     pipes = [None]
     answers = []
-    for command in commands:
+    for step, command in enumerate(commands):
         if command < 0:
             pid = -command
             start, length = pipes[pid]
@@ -18,6 +20,8 @@ def expected_replies(commands, policy="best-fit"):
             pipes[pid] = None
             answers.append(str(start))
             continue
+        if reference is not None:
+            reference_trench += 20 * int(reference[step].split()[0])
         gaps = []
         i = 0
         while i < len(cells):
@@ -31,7 +35,14 @@ def expected_replies(commands, policy="best-fit"):
                 gaps.append((i - start, start))
         digs = 0
         if gaps:
-            _, start = min(gaps, key=(lambda gap: gap[1]) if policy == "first-fit" else None)
+            if policy == "first-fit":
+                _, start = min(gaps, key=lambda gap: gap[1])
+            elif policy == "hybrid" and len(cells) <= reference_trench:
+                limit = min(length for length, _ in gaps) + 1
+                _, start = min((gap for gap in gaps if gap[0] <= limit),
+                               key=lambda gap: gap[1])
+            else:
+                _, start = min(gaps)
         else:
             start = len(cells)
             while start > 0 and cells[start - 1] == 0:
@@ -61,7 +72,7 @@ def check(solution, commands, expected):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("solution", type=Path)
-    parser.add_argument("--policy", choices=("best-fit", "first-fit"), default="best-fit")
+    parser.add_argument("--policy", choices=("best-fit", "first-fit", "hybrid"), default="best-fit")
     args = parser.parse_args()
     solution = args.solution.resolve(strict=True)
     scenarios = [
@@ -71,6 +82,7 @@ def main():
         [10, 1, 10, 1, -1, -3, 10, 10],    # equal gaps: leftmost first
         [4, 10, 6, -1, -3, 3, 4, 3],       # fragmentation under Best Fit
         [4, 4, 3, 4, 2, 3, -1, -3, -5, 2, -6, 5],  # public test 3
+        [2, 1, 1, 16, -1, -3, 1, 2, -4, 1, 3],    # hybrid exceeds shadow trench
     ]
     for seed in range(20):
         rng = random.Random(seed)
